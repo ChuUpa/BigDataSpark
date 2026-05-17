@@ -1,0 +1,119 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: bigdata-postgres
+    environment:
+      POSTGRES_USER: spark
+      POSTGRES_PASSWORD: spark123
+      POSTGRES_DB: bigdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init-scripts:/docker-entrypoint-initdb.d
+      - "./\u0438\u0441\u0445\u043e\u0434\u043d\u044b\u0435 \u0434\u0430\u043d\u043d\u044b\u0435:/data"
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - bigdata-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spark -d bigdata"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: bigdata-clickhouse
+    environment:
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=clickhouse123
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    networks:
+      - bigdata-net
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--password", "clickhouse123", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  spark-master:
+    image: apache/spark:3.5.5
+    container_name: bigdata-spark-master
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    networks:
+      - bigdata-net
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master", "-h", "spark-master"]
+
+  spark-worker:
+    image: apache/spark:3.5.5
+    container_name: bigdata-spark-worker
+    depends_on:
+      - spark-master
+    networks:
+      - bigdata-net
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "-m", "2g", "-c", "2"]
+
+  spark-submit:
+    image: apache/spark:3.5.5
+    container_name: bigdata-spark-submit
+    environment:
+      - POSTGRES_URL=jdbc:postgresql://postgres:5432/bigdata
+      - POSTGRES_USER=spark
+      - POSTGRES_PASSWORD=spark123
+      - CLICKHOUSE_URL=jdbc:ch://clickhouse:8123/default
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_HTTP_PORT=8123
+      - CLICKHOUSE_NATIVE_PORT=9000
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=clickhouse123
+    volumes:
+      - ./spark-jobs:/app
+      - ./jars:/opt/spark-jars
+      - "./\u0438\u0441\u0445\u043e\u0434\u043d\u044b\u0435 \u0434\u0430\u043d\u043d\u044b\u0435:/data"
+    depends_on:
+      - spark-master
+      - postgres
+      - clickhouse
+    networks:
+      - bigdata-net
+    command: sleep infinity
+
+  jupyter:
+    image: apache/spark:3.5.5
+    container_name: bigdata-jupyter
+    user: root
+    environment:
+      - POSTGRES_URL=jdbc:postgresql://postgres:5432/bigdata
+      - POSTGRES_USER=spark
+      - POSTGRES_PASSWORD=spark123
+      - CLICKHOUSE_URL=jdbc:ch://clickhouse:8123/default
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=clickhouse123
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./spark-jobs:/app
+      - "./\u0438\u0441\u0445\u043e\u0434\u043d\u044b\u0435 \u0434\u0430\u043d\u043d\u044b\u0435:/data"
+      - ./jars:/opt/spark-jars
+    depends_on:
+      - spark-master
+      - postgres
+      - clickhouse
+    networks:
+      - bigdata-net
+    command: >
+      bash -c "pip install jupyter pyspark &&
+      jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''"
+
+volumes:
+  postgres-data:
+  clickhouse-data:
+
+networks:
+  bigdata-net:
+    driver: bridge
