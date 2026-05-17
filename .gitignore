@@ -1,9 +1,15 @@
-.vscode/
+
 .idea/
+.vscode/
+*.iml
 
 __pycache__/
 *.pyc
+*.pyo
+.env
+
 .DS_Store
+Thumbs.db
 
-
-
+data/
+drivers/*.jar
